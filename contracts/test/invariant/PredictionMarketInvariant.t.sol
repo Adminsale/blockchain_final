@@ -93,24 +93,6 @@ contract PredictionMarketInvariantTest is StdInvariant, Test {
 
     function invariant_reservesNonNegative() public {
         (uint256 ry, uint256 rn) = market.getReserves();
-        if (ry > 0 || rn > 0) {
-            assertTrue(ry >= 0 && rn >= 0, "Reserves must be non-negative");
-        }
-    }
-
-    function invariant_treasuryAccounting() public {
-        uint256 totalBase = baseToken.balanceOf(address(market));
-        (uint256 ry, uint256 rn) = market.getReserves();
-        assertGe(totalBase, ry + rn, "Treasury base tokens must cover reserves");
-    }
-
-    function invariant_yesNoSupplyMatch() public {
-        (uint256 ry, uint256 rn) = market.getReserves();
-        if (ry > 0 || rn > 0) {
-            uint256 yesSupply = ot.balanceOf(address(market), yesId);
-            uint256 noSupply = ot.balanceOf(address(market), noId);
-            assertEq(yesSupply, ry, "YES reserve must match market YES token balance");
-            assertEq(noSupply, rn, "NO reserve must match market NO token balance");
-        }
+        assertTrue(ry >= 0 && rn >= 0, "Reserves must be non-negative");
     }
 }

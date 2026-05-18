@@ -6,7 +6,7 @@ library PredictionMath {
             if gt(y, 3) {
                 z := y
                 let r := div(y, 2)
-                for {} gt(r, z) {} {
+                for {} lt(r, z) {} {
                     z := r
                     r := div(add(div(y, r), r), 2)
                 }

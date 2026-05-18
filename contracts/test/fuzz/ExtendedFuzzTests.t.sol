@@ -9,8 +9,9 @@ import "../../src/mock/MockUSDC.sol";
 import "../../src/mock/MockAggregator.sol";
 import "../../src/oracles/ChainlinkPriceFeed.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 
-contract ExtendedFuzzTests is Test {
+contract ExtendedFuzzTests is Test, ERC1155Holder {
     PredictionMarket public market;
     OutcomeToken public ot;
     MockUSDC public baseToken;

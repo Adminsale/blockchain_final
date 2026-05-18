@@ -10,6 +10,8 @@ contract OutcomeToken is ERC1155, AccessControl {
     string public name;
     string public symbol;
 
+    mapping(uint256 => uint256) public totalSupply;
+
     constructor(string memory _name, string memory _symbol, string memory _uri) ERC1155(_uri) {
         name = _name;
         symbol = _symbol;
@@ -21,18 +23,26 @@ contract OutcomeToken is ERC1155, AccessControl {
     }
 
     function mint(address account, uint256 id, uint256 amount, bytes memory data) external onlyRole(MINTER_ROLE) {
+        totalSupply[id] += amount;
         _mint(account, id, amount, data);
     }
 
     function mintBatch(address to, uint256[] memory ids, uint256[] memory amounts, bytes memory data) external onlyRole(MINTER_ROLE) {
+        for (uint256 i = 0; i < ids.length; i++) {
+            totalSupply[ids[i]] += amounts[i];
+        }
         _mintBatch(to, ids, amounts, data);
     }
 
     function burn(address account, uint256 id, uint256 amount) external onlyRole(BURNER_ROLE) {
+        totalSupply[id] -= amount;
         _burn(account, id, amount);
     }
 
     function burnBatch(address account, uint256[] memory ids, uint256[] memory amounts) external onlyRole(BURNER_ROLE) {
+        for (uint256 i = 0; i < ids.length; i++) {
+            totalSupply[ids[i]] -= amounts[i];
+        }
         _burnBatch(account, ids, amounts);
     }
 

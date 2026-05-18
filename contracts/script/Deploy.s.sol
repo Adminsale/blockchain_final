@@ -224,7 +224,8 @@ contract UpgradeVault is Script {
         FeeVaultV2 newImpl = new FeeVaultV2();
         FeeVault(address(payable(proxyAddress))).upgradeToAndCall(address(newImpl), "");
 
-        FeeVaultV2(address(payable(proxyAddress))).initializeV2(10);
+        address treasury = vm.envOr("TREASURY", address(0xdead));
+        FeeVaultV2(address(payable(proxyAddress))).initializeV2(10, treasury);
 
         vm.stopBroadcast();
     }

@@ -9,14 +9,35 @@ import {
 } from "../generated/PredictionMarket/PredictionMarket"
 import { Market, Trade, LiquidityChange } from "../generated/schema"
 
+function ensureMarket(id: string, timestamp: BigInt): Market {
+  let market = Market.load(id)
+  if (market != null) return market
+
+  market = new Market(id)
+  market.marketId = BigInt.zero()
+  market.question = ""
+  market.creator = Bytes.empty()
+  market.resolutionTime = BigInt.zero()
+  market.resolved = false
+  market.winner = 0
+  market.outcomeToken = Bytes.empty()
+  market.baseToken = Bytes.empty()
+  market.reserveYes = BigInt.zero()
+  market.reserveNo = BigInt.zero()
+  market.feeBps = 0
+  market.totalLpShares = BigInt.zero()
+  market.createdAt = timestamp
+  market.save()
+  return market
+}
+
 export function handleTokensPurchased(event: TokensPurchasedEvent): void {
-  let market = Market.load(event.address.toHexString())
-  if (!market) return
+  ensureMarket(event.address.toHexString(), event.block.timestamp)
 
   let trade = new Trade(
     event.transaction.hash.toHexString() + "-" + event.logIndex.toString()
   )
-  trade.market = market.id
+  trade.market = event.address.toHexString()
   trade.trader = event.params.buyer
   trade.outcome = event.params.outcome
   trade.amountIn = event.params.amountIn
@@ -26,13 +47,12 @@ export function handleTokensPurchased(event: TokensPurchasedEvent): void {
 }
 
 export function handleTokensSold(event: TokensSoldEvent): void {
-  let market = Market.load(event.address.toHexString())
-  if (!market) return
+  ensureMarket(event.address.toHexString(), event.block.timestamp)
 
   let trade = new Trade(
     event.transaction.hash.toHexString() + "-" + event.logIndex.toString()
   )
-  trade.market = market.id
+  trade.market = event.address.toHexString()
   trade.trader = event.params.seller
   trade.outcome = event.params.outcome
   trade.amountIn = event.params.amountIn
@@ -42,9 +62,7 @@ export function handleTokensSold(event: TokensSoldEvent): void {
 }
 
 export function handleLiquidityAdded(event: LiquidityAddedEvent): void {
-  let marketId = event.address.toHexString()
-  let market = Market.load(marketId)
-  if (!market) return
+  let market = ensureMarket(event.address.toHexString(), event.block.timestamp)
 
   market.reserveYes = market.reserveYes.plus(event.params.amountYes)
   market.reserveNo = market.reserveNo.plus(event.params.amountNo)
@@ -54,7 +72,7 @@ export function handleLiquidityAdded(event: LiquidityAddedEvent): void {
   let lc = new LiquidityChange(
     event.transaction.hash.toHexString() + "-" + event.logIndex.toString()
   )
-  lc.market = marketId
+  lc.market = event.address.toHexString()
   lc.provider = event.params.lp
   lc.amountYes = event.params.amountYes
   lc.amountNo = event.params.amountNo
@@ -65,9 +83,7 @@ export function handleLiquidityAdded(event: LiquidityAddedEvent): void {
 }
 
 export function handleLiquidityRemoved(event: LiquidityRemovedEvent): void {
-  let marketId = event.address.toHexString()
-  let market = Market.load(marketId)
-  if (!market) return
+  let market = ensureMarket(event.address.toHexString(), event.block.timestamp)
 
   market.reserveYes = market.reserveYes.minus(event.params.amountYes)
   market.reserveNo = market.reserveNo.minus(event.params.amountNo)
@@ -77,7 +93,7 @@ export function handleLiquidityRemoved(event: LiquidityRemovedEvent): void {
   let lc = new LiquidityChange(
     event.transaction.hash.toHexString() + "-" + event.logIndex.toString()
   )
-  lc.market = marketId
+  lc.market = event.address.toHexString()
   lc.provider = event.params.lp
   lc.amountYes = event.params.amountYes
   lc.amountNo = event.params.amountNo
@@ -88,8 +104,7 @@ export function handleLiquidityRemoved(event: LiquidityRemovedEvent): void {
 }
 
 export function handleMarketResolved(event: MarketResolvedEvent): void {
-  let market = Market.load(event.address.toHexString())
-  if (!market) return
+  let market = ensureMarket(event.address.toHexString(), event.block.timestamp)
 
   market.resolved = true
   market.winner = event.params.winner

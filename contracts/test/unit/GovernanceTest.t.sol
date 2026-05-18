@@ -4,6 +4,7 @@ import "forge-std/Test.sol";
 import "../../src/tokens/GovernanceToken.sol";
 import "../../src/governance/ProtocolGovernor.sol";
 import "@openzeppelin/contracts/governance/TimelockController.sol";
+import "@openzeppelin/contracts/governance/IGovernor.sol";
 
 contract GovernanceTest is Test {
     GovernanceToken public govToken;
@@ -25,8 +26,13 @@ contract GovernanceTest is Test {
 
         governor = new ProtocolGovernor(IVotes(address(govToken)), timelock);
 
+        timelock.grantRole(timelock.PROPOSER_ROLE(), address(governor));
+        timelock.grantRole(timelock.EXECUTOR_ROLE(), address(governor));
+        timelock.grantRole(timelock.CANCELLER_ROLE(), address(governor));
+
         govToken.transfer(voter1, 100_000e18);
         govToken.transfer(voter2, 100_000e18);
+        govToken.transfer(address(this), 500_000e18);
         vm.stopPrank();
 
         vm.startPrank(voter1);
@@ -36,6 +42,8 @@ contract GovernanceTest is Test {
         vm.startPrank(voter2);
         govToken.delegate(voter2);
         vm.stopPrank();
+
+        govToken.delegate(address(this));
     }
 
     function test_GovernanceToken() public {
@@ -74,8 +82,10 @@ contract GovernanceTest is Test {
     }
 
     function test_GovernorInitialState() public {
-        assertEq(uint256(governor.votingDelay()), 1 days / 1); // 1 day
-        assertEq(uint256(governor.votingPeriod()), 1 weeks / 1); // 1 week
+        assertEq(uint256(governor.votingDelay()), 1 days / 1);
+        assertEq(uint256(governor.votingPeriod()), 1 weeks / 1);
+        assertEq(governor.proposalThreshold(), 1e22);
+        assertTrue(governor.supportsInterface(type(IGovernor).interfaceId));
     }
 
     function test_Propose() public {
@@ -125,7 +135,6 @@ contract GovernanceTest is Test {
 
         vm.roll(block.number + governor.votingDelay() + 1);
 
-        uint256 votesFor = govToken.getVotes(voter1);
         vm.prank(voter1);
         governor.castVote(proposalId, 1);
 
@@ -137,5 +146,59 @@ contract GovernanceTest is Test {
         vm.warp(block.timestamp + 2 days + 1);
 
         governor.execute(targets, values, calldatas, descHash);
+    }
+
+    function test_TimelockDelay() public {
+        assertEq(timelock.getMinDelay(), 2 days);
+    }
+
+    function test_GovernorHasTimelockRoles() public {
+        assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), address(governor)));
+        assertTrue(timelock.hasRole(timelock.EXECUTOR_ROLE(), address(governor)));
+        assertTrue(timelock.hasRole(timelock.CANCELLER_ROLE(), address(governor)));
+    }
+
+    function test_Quorum() public {
+        vm.roll(block.number + 2);
+        assertEq(governor.quorum(block.number - 1), 40_000e18);
+    }
+
+    function test_StatePending() public {
+        vm.roll(block.number + 1);
+
+        address[] memory targets = new address[](1);
+        targets[0] = address(treasury);
+        uint256[] memory values = new uint256[](1);
+        bytes[] memory calldatas = new bytes[](1);
+        calldatas[0] = abi.encodeWithSignature("receive()");
+        string memory description = "State test";
+
+        uint256 proposalId = governor.propose(targets, values, calldatas, description);
+        IGovernor.ProposalState state = governor.state(proposalId);
+        assertTrue(state == IGovernor.ProposalState.Pending);
+    }
+
+    function test_Nonces() public {
+        govToken.nonces(address(this));
+    }
+
+    function test_CancelProposal() public {
+        vm.roll(block.number + 1);
+
+        address[] memory targets = new address[](1);
+        targets[0] = address(treasury);
+        uint256[] memory values = new uint256[](1);
+        values[0] = 0;
+        bytes[] memory calldatas = new bytes[](1);
+        calldatas[0] = abi.encodeWithSignature("receive()");
+        string memory description = "Cancel test";
+
+        uint256 proposalId = governor.propose(targets, values, calldatas, description);
+
+        bytes32 descHash = keccak256(bytes(description));
+        governor.cancel(targets, values, calldatas, descHash);
+
+        IGovernor.ProposalState state = governor.state(proposalId);
+        assertTrue(state == IGovernor.ProposalState.Canceled, "Proposal should be canceled");
     }
 }

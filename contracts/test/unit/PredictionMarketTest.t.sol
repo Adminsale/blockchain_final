@@ -67,6 +67,8 @@ contract PredictionMarketTest is Test {
         vm.stopPrank();
     }
 
+    // ---- Constructor ----
+
     function test_Constructor() public {
         assertEq(market.question(), "Will ETH reach $5000 by June 2026?");
         assertEq(market.resolutionTime(), resolutionTime);
@@ -77,6 +79,18 @@ contract PredictionMarketTest is Test {
         assertEq(address(market.baseToken()), address(baseToken));
         assertEq(market.feeVault(), address(feeVaultProxy));
     }
+
+    function test_ConstructorRevertsHighFee() public {
+        vm.expectRevert(abi.encodeWithSelector(PredictionMarket.FeeTooHigh.selector));
+        new PredictionMarket(
+            "test", resolutionTime, disputeWindow,
+            address(ot), yesId, noId,
+            address(baseToken), 1001,
+            address(feeVaultProxy), address(priceFeed), resolver
+        );
+    }
+
+    // ---- Split / Merge ----
 
     function test_SplitBase() public {
         vm.startPrank(trader);
@@ -123,7 +137,91 @@ contract PredictionMarketTest is Test {
         assertEq(baseToken.balanceOf(trader), 1_000_000e6);
     }
 
+    // ---- Add Liquidity ----
+
+    function test_AddLiquidity() public {
+        vm.startPrank(lp);
+        baseToken.approve(address(market), 1000e6);
+        uint256 shares = market.addLiquidity(1000e6);
+        vm.stopPrank();
+
+        assertTrue(shares > 0);
+        assertEq(market.lpShares(lp), shares);
+        assertTrue(market.totalLpShares() >= shares);
+        (uint256 ry, uint256 rn) = market.getReserves();
+        assertEq(ry, 1000e6);
+        assertEq(rn, 1000e6);
+    }
+
+    function test_AddLiquidityTwice() public {
+        vm.startPrank(lp);
+        baseToken.approve(address(market), 2000e6);
+        market.addLiquidity(1000e6);
+        market.addLiquidity(500e6);
+        vm.stopPrank();
+
+        (uint256 ry, uint256 rn) = market.getReserves();
+        assertEq(ry, 1500e6);
+        assertEq(rn, 1500e6);
+    }
+
+    function test_AddLiquidityRevertsZeroAmount() public {
+        vm.startPrank(lp);
+        baseToken.approve(address(market), 100e6);
+        vm.expectRevert(abi.encodeWithSelector(PredictionMarket.ZeroAmount.selector));
+        market.addLiquidity(0);
+        vm.stopPrank();
+    }
+
+    function test_AddLiquidityRevertsAfterResolutionTime() public {
+        vm.warp(resolutionTime);
+        vm.startPrank(lp);
+        baseToken.approve(address(market), 1000e6);
+        vm.expectRevert(abi.encodeWithSelector(PredictionMarket.TradingEnded.selector));
+        market.addLiquidity(1000e6);
+        vm.stopPrank();
+    }
+
+    // ---- Remove Liquidity ----
+
+    function test_RemoveLiquidity() public {
+        vm.startPrank(lp);
+        baseToken.approve(address(market), 1000e6);
+        uint256 shares = market.addLiquidity(1000e6);
+        uint256 lpBalanceYesBefore = ot.balanceOf(lp, yesId);
+        uint256 lpBalanceNoBefore = ot.balanceOf(lp, noId);
+
+        ot.setApprovalForAll(address(market), true);
+        (uint256 amountYes, uint256 amountNo) = market.removeLiquidity(shares);
+        vm.stopPrank();
+
+        assertTrue(amountYes > 0);
+        assertTrue(amountNo > 0);
+        assertEq(market.lpShares(lp), 0);
+        assertTrue(ot.balanceOf(lp, yesId) > lpBalanceYesBefore);
+        assertTrue(ot.balanceOf(lp, noId) > lpBalanceNoBefore);
+    }
+
+    function test_RemoveLiquidityRevertsInsufficientShares() public {
+        vm.expectRevert(abi.encodeWithSelector(PredictionMarket.InsufficientShares.selector));
+        vm.prank(trader);
+        market.removeLiquidity(1);
+    }
+
+    function test_RemoveLiquidityRevertsZeroAmount() public {
+        vm.expectRevert(abi.encodeWithSelector(PredictionMarket.ZeroAmount.selector));
+        vm.prank(trader);
+        market.removeLiquidity(0);
+    }
+
+    // ---- Buy Outcome ----
+
     function test_BuyOutcomeYes() public {
+        vm.startPrank(lp);
+        baseToken.approve(address(market), 10_000e6);
+        market.addLiquidity(10_000e6);
+        vm.stopPrank();
+
         vm.startPrank(trader);
         baseToken.approve(address(market), 100e6);
         uint256 out = market.buyOutcome(1, 100e6, 0);
@@ -132,20 +230,30 @@ contract PredictionMarketTest is Test {
         assertTrue(out > 100e6, "Should get more than input YES tokens");
         assertEq(ot.balanceOf(trader, yesId), out);
         assertEq(ot.balanceOf(trader, noId), 0);
-        assertTrue(market.reserveNo() > 0, "NO reserve should increase");
+        assertTrue(market.reserveNo() > market.reserveYes(), "NO reserve should be larger than YES");
     }
 
     function test_BuyOutcomeNo() public {
+        vm.startPrank(lp);
+        baseToken.approve(address(market), 10_000e6);
+        market.addLiquidity(10_000e6);
+        vm.stopPrank();
+
         vm.startPrank(trader);
         baseToken.approve(address(market), 100e6);
-        market.buyOutcome(2, 100e6, 0);
+        uint256 out = market.buyOutcome(2, 100e6, 0);
         vm.stopPrank();
 
         assertEq(ot.balanceOf(trader, yesId), 0);
-        assertTrue(ot.balanceOf(trader, noId) > 100e6);
+        assertTrue(out > 100e6, "Should get more than input NO tokens");
     }
 
     function test_BuyOutcomeUpdatesReserves() public {
+        vm.startPrank(lp);
+        baseToken.approve(address(market), 10_000e6);
+        market.addLiquidity(10_000e6);
+        vm.stopPrank();
+
         vm.startPrank(trader);
         baseToken.approve(address(market), 100e6);
         (uint256 ryBefore, uint256 rnBefore) = market.getReserves();
@@ -159,10 +267,7 @@ contract PredictionMarketTest is Test {
     }
 
     function test_BuyOutcomeRevertsAfterResolution() public {
-        vm.startPrank(trader);
-        baseToken.approve(address(market), 100e6);
-        vm.stopPrank();
-
+        vm.warp(resolutionTime);
         vm.prank(resolver);
         market.resolveMarket(1);
 
@@ -189,7 +294,23 @@ contract PredictionMarketTest is Test {
         vm.stopPrank();
     }
 
+    function test_BuyOutcomeRevertsTradingEnded() public {
+        vm.warp(resolutionTime);
+        vm.startPrank(trader);
+        baseToken.approve(address(market), 100e6);
+        vm.expectRevert(abi.encodeWithSelector(PredictionMarket.TradingEnded.selector));
+        market.buyOutcome(1, 100e6, 0);
+        vm.stopPrank();
+    }
+
+    // ---- Sell Outcome ----
+
     function test_SellOutcome() public {
+        vm.startPrank(lp);
+        baseToken.approve(address(market), 10_000e6);
+        market.addLiquidity(10_000e6);
+        vm.stopPrank();
+
         vm.startPrank(trader);
         baseToken.approve(address(market), 100e6);
         market.buyOutcome(1, 100e6, 0);
@@ -202,51 +323,68 @@ contract PredictionMarketTest is Test {
         assertTrue(ot.balanceOf(trader, yesId) < yesBalance);
     }
 
-    function test_AddLiquidity() public {
-        vm.startPrank(lp);
-        baseToken.approve(address(market), 1000e6);
-        uint256 shares = market.addLiquidity(1000e6);
-        vm.stopPrank();
-
-        assertTrue(shares > 0);
-        assertEq(market.lpShares(lp), shares);
-        assertTrue(market.totalLpShares() >= shares);
-        (uint256 ry, uint256 rn) = market.getReserves();
-        assertEq(ry, 1000e6);
-        assertEq(rn, 1000e6);
-    }
-
-    function test_AddLiquidityTwice() public {
-        vm.startPrank(lp);
-        baseToken.approve(address(market), 1000e6);
-        market.addLiquidity(1000e6);
-        market.addLiquidity(500e6);
-        vm.stopPrank();
-
-        (uint256 ry, uint256 rn) = market.getReserves();
-        assertEq(ry, 1500e6);
-        assertEq(rn, 1500e6);
-    }
-
-    function test_RemoveLiquidity() public {
-        vm.startPrank(lp);
-        baseToken.approve(address(market), 1000e6);
-        uint256 shares = market.addLiquidity(1000e6);
-        uint256 lpBalanceYesBefore = ot.balanceOf(lp, yesId);
-        uint256 lpBalanceNoBefore = ot.balanceOf(lp, noId);
-
+    function test_SellOutcomeRevertsZeroAmount() public {
+        vm.startPrank(trader);
         ot.setApprovalForAll(address(market), true);
-        (uint256 amountYes, uint256 amountNo) = market.removeLiquidity(shares);
+        vm.expectRevert(abi.encodeWithSelector(PredictionMarket.ZeroAmount.selector));
+        market.sellOutcome(1, 0, 0);
+        vm.stopPrank();
+    }
+
+    function test_SellOutcomeRevertsInvalidOutcome() public {
+        vm.startPrank(trader);
+        ot.setApprovalForAll(address(market), true);
+        vm.expectRevert(abi.encodeWithSelector(PredictionMarket.InvalidOutcome.selector));
+        market.sellOutcome(3, 100e6, 0);
+        vm.stopPrank();
+    }
+
+    // ---- Swap ----
+
+    function test_SwapTokenForToken() public {
+        vm.startPrank(lp);
+        baseToken.approve(address(market), 10_000e6);
+        market.addLiquidity(10_000e6);
         vm.stopPrank();
 
-        assertTrue(amountYes > 0);
-        assertTrue(amountNo > 0);
-        assertEq(market.lpShares(lp), 0);
-        assertTrue(ot.balanceOf(lp, yesId) > lpBalanceYesBefore);
-        assertTrue(ot.balanceOf(lp, noId) > lpBalanceNoBefore);
+        vm.startPrank(trader);
+        baseToken.approve(address(market), 100e6);
+        market.splitBase(100e6);
+        ot.setApprovalForAll(address(market), true);
+        uint256 out = market.swap(noId, yesId, 50e6, 0);
+        vm.stopPrank();
+
+        assertTrue(out > 0);
     }
+
+    function test_SwapRevertsPastResolution() public {
+        vm.startPrank(trader);
+        baseToken.approve(address(market), 100e6);
+        market.splitBase(100e6);
+        vm.stopPrank();
+
+        vm.warp(resolutionTime);
+        vm.startPrank(trader);
+        ot.setApprovalForAll(address(market), true);
+        vm.expectRevert(abi.encodeWithSelector(PredictionMarket.TradingEnded.selector));
+        market.swap(noId, yesId, 50e6, 0);
+        vm.stopPrank();
+    }
+
+    function test_SwapRevertsSameToken() public {
+        vm.startPrank(trader);
+        baseToken.approve(address(market), 100e6);
+        market.splitBase(100e6);
+        ot.setApprovalForAll(address(market), true);
+        vm.expectRevert("Same token");
+        market.swap(yesId, yesId, 50e6, 0);
+        vm.stopPrank();
+    }
+
+    // ---- Resolve ----
 
     function test_ResolveMarket() public {
+        vm.warp(resolutionTime);
         vm.prank(resolver);
         market.resolveMarket(1);
 
@@ -255,6 +393,7 @@ contract PredictionMarketTest is Test {
     }
 
     function test_ResolveMarketRevertsFromNonResolver() public {
+        vm.warp(resolutionTime);
         vm.expectRevert();
         vm.prank(trader);
         market.resolveMarket(1);
@@ -268,6 +407,7 @@ contract PredictionMarketTest is Test {
     }
 
     function test_ResolveMarketRevertsAlreadyResolved() public {
+        vm.warp(resolutionTime);
         vm.prank(resolver);
         market.resolveMarket(1);
 
@@ -283,10 +423,17 @@ contract PredictionMarketTest is Test {
         market.resolveMarket(3);
     }
 
+    // ---- Redeem ----
+
     function test_RedeemWinningOutcome() public {
+        vm.startPrank(lp);
+        baseToken.approve(address(market), 10_000e6);
+        market.addLiquidity(10_000e6);
+        vm.stopPrank();
+
         vm.startPrank(trader);
-        baseToken.approve(address(market), 100e6);
-        market.buyOutcome(1, 100e6, 0);
+        baseToken.approve(address(market), 500e6);
+        market.buyOutcome(1, 500e6, 0);
         vm.stopPrank();
 
         vm.warp(resolutionTime);
@@ -327,11 +474,50 @@ contract PredictionMarketTest is Test {
         vm.stopPrank();
     }
 
-    function test_DisputeAndReresolve() public {
+    function test_RedeemRevertsNoTokens() public {
+        vm.warp(resolutionTime);
         vm.prank(resolver);
         market.resolveMarket(1);
 
+        vm.startPrank(trader);
+        ot.setApprovalForAll(address(market), true);
+        vm.expectRevert(abi.encodeWithSelector(PredictionMarket.NoTokensToRedeem.selector));
+        market.redeem(1);
+        vm.stopPrank();
+    }
+
+    function test_RedeemFullWinningPool() public {
+        vm.startPrank(lp);
+        baseToken.approve(address(market), 1000e6);
+        market.addLiquidity(1000e6);
+        vm.stopPrank();
+
+        vm.startPrank(trader);
+        baseToken.approve(address(market), 500e6);
+        market.buyOutcome(1, 500e6, 0);
+        uint256 traderYes = ot.balanceOf(trader, yesId);
+        vm.stopPrank();
+
+        vm.warp(resolutionTime);
         vm.prank(resolver);
+        market.resolveMarket(1);
+
+        vm.startPrank(trader);
+        ot.setApprovalForAll(address(market), true);
+        uint256 balBefore = baseToken.balanceOf(trader);
+        market.redeem(1);
+        vm.stopPrank();
+
+        assertTrue(baseToken.balanceOf(trader) > balBefore);
+    }
+
+    // ---- Dispute ----
+
+    function test_DisputeAndReresolve() public {
+        vm.warp(resolutionTime);
+        vm.prank(resolver);
+        market.resolveMarket(1);
+
         market.raiseDispute();
 
         assertFalse(market.resolved());
@@ -343,11 +529,27 @@ contract PredictionMarketTest is Test {
         vm.prank(resolver);
         market.resolveMarket(1);
 
-        vm.warp(block.timestamp + disputeWindow);
+        vm.warp(block.timestamp + disputeWindow + 1);
         vm.expectRevert(abi.encodeWithSelector(PredictionMarket.DisputeWindowClosed.selector));
-        vm.prank(resolver);
         market.raiseDispute();
     }
+
+    function test_OnlyManagerCanRaiseDispute() public {
+        vm.warp(resolutionTime);
+        vm.prank(resolver);
+        market.resolveMarket(1);
+
+        vm.expectRevert();
+        vm.prank(trader);
+        market.raiseDispute();
+    }
+
+    function test_DisputeRevertsNotResolved() public {
+        vm.expectRevert(abi.encodeWithSelector(PredictionMarket.NotResolved.selector));
+        market.raiseDispute();
+    }
+
+    // ---- Prices ----
 
     function test_GetPrice() public {
         uint256 priceYes = market.getPrice(1);
@@ -378,11 +580,17 @@ contract PredictionMarketTest is Test {
         assertTrue(market.getPrice(2) < 0.5e18);
     }
 
+    function test_GetPriceInvalidOutcome() public view {
+        assertEq(market.getPrice(3), 0);
+    }
+
     function test_GetReserves() public {
         (uint256 ry, uint256 rn) = market.getReserves();
         assertEq(ry, 0);
         assertEq(rn, 0);
     }
+
+    // ---- Fees ----
 
     function test_FeesCollected() public {
         vm.startPrank(lp);
@@ -398,48 +606,32 @@ contract PredictionMarketTest is Test {
         assertTrue(baseToken.balanceOf(address(feeVaultProxy)) > 0);
     }
 
-    function test_SwapTokenForToken() public {
-        vm.startPrank(trader);
-        baseToken.approve(address(market), 100e6);
-        market.splitBase(100e6);
-        ot.setApprovalForAll(address(market), true);
-        uint256 out = market.swap(noId, yesId, 50e6, 0);
-        vm.stopPrank();
-
-        assertTrue(out > 0);
+    function test_FeeTooHighReverts() public {
+        vm.expectRevert(abi.encodeWithSelector(PredictionMarket.FeeTooHigh.selector));
+        new PredictionMarket(
+            "test", resolutionTime, disputeWindow,
+            address(ot), yesId, noId,
+            address(baseToken), 1001,
+            address(feeVaultProxy), address(priceFeed), resolver
+        );
     }
 
-    function test_SwapRevertsPastResolution() public {
-        vm.startPrank(trader);
-        baseToken.approve(address(market), 100e6);
-        market.splitBase(100e6);
-        vm.stopPrank();
-
-        vm.warp(resolutionTime);
-        vm.startPrank(trader);
-        ot.setApprovalForAll(address(market), true);
-        vm.expectRevert(abi.encodeWithSelector(PredictionMarket.TradingEnded.selector));
-        market.swap(noId, yesId, 50e6, 0);
-        vm.stopPrank();
-    }
-
-    function test_OnlyManagerCanRaiseDispute() public {
-        vm.warp(resolutionTime);
-        vm.prank(resolver);
-        market.resolveMarket(1);
-
-        vm.expectRevert();
-        vm.prank(trader);
-        market.raiseDispute();
-    }
+    // ---- Slippage ----
 
     function testSlippageProtection() public {
+        vm.startPrank(lp);
+        baseToken.approve(address(market), 10_000e6);
+        market.addLiquidity(10_000e6);
+        vm.stopPrank();
+
         vm.startPrank(trader);
         baseToken.approve(address(market), 100e6);
         vm.expectRevert(abi.encodeWithSelector(PredictionMarket.SlippageExceeded.selector));
         market.buyOutcome(1, 100e6, 1e30);
         vm.stopPrank();
     }
+
+    // ---- Multiple traders ----
 
     function test_MultipleTraders() public {
         address trader2 = address(0x5);
@@ -465,44 +657,26 @@ contract PredictionMarketTest is Test {
         assertApproxEqAbs(priceYes + priceNo, 1e18, 1);
     }
 
-    function test_RemoveLiquidityRevertsInsufficientShares() public {
-        vm.expectRevert(abi.encodeWithSelector(PredictionMarket.InsufficientShares.selector));
-        vm.prank(trader);
-        market.removeLiquidity(1);
-    }
+    // ---- Access Control ----
 
-    function test_ConstructorRevertsHighFee() public {
-        vm.expectRevert(abi.encodeWithSelector(PredictionMarket.FeeTooHigh.selector));
-        new PredictionMarket(
-            "test", resolutionTime, disputeWindow,
-            address(ot), yesId, noId,
-            address(baseToken), 1001,
-            address(feeVaultProxy), address(priceFeed), resolver
-        );
-    }
-
-    function test_RedeemFullWinningPool() public {
-        vm.startPrank(lp);
-        baseToken.approve(address(market), 1000e6);
-        market.addLiquidity(1000e6);
-        vm.stopPrank();
-
-        vm.startPrank(trader);
-        baseToken.approve(address(market), 500e6);
-        market.buyOutcome(1, 500e6, 0);
-        uint256 traderYes = ot.balanceOf(trader, yesId);
-        vm.stopPrank();
-
+    function test_AccessControlResolverOnly() public {
         vm.warp(resolutionTime);
-        vm.prank(resolver);
+        vm.expectRevert();
+        vm.prank(trader);
         market.resolveMarket(1);
+    }
 
+    // ---- Edge Cases ----
+
+    function test_SplitMergePreservesBalance() public {
+        uint256 traderBaseBefore = baseToken.balanceOf(trader);
         vm.startPrank(trader);
+        baseToken.approve(address(market), 100e6);
+        market.splitBase(100e6);
         ot.setApprovalForAll(address(market), true);
-        uint256 balBefore = baseToken.balanceOf(trader);
-        market.redeem(1);
+        market.mergeOutcomes(100e6);
         vm.stopPrank();
 
-        assertTrue(baseToken.balanceOf(trader) > balBefore);
+        assertEq(baseToken.balanceOf(trader), traderBaseBefore);
     }
 }

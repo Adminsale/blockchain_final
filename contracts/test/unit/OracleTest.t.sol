@@ -60,4 +60,13 @@ contract OracleTest is Test {
         vm.expectRevert("ChainlinkPriceFeed: price is stale");
         feed.getPrice();
     }
+
+    function test_RoundNotComplete() public {
+        MockAggregator customAgg = new MockAggregator(2000e8);
+        feed.setAggregator(address(customAgg));
+        bytes memory returnData = abi.encode(uint80(2), int256(2000e8), uint256(block.timestamp), uint256(block.timestamp), uint80(1));
+        vm.mockCall(address(customAgg), abi.encodeWithSelector(0xfeaf968c), returnData);
+        vm.expectRevert("ChainlinkPriceFeed: round not complete");
+        feed.getPrice();
+    }
 }

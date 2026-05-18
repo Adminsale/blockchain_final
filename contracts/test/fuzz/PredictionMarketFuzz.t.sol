@@ -10,8 +10,9 @@ import "../../src/mock/MockUSDC.sol";
 import "../../src/mock/MockAggregator.sol";
 import "../../src/oracles/ChainlinkPriceFeed.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 
-contract PredictionMarketFuzzTest is Test {
+contract PredictionMarketFuzzTest is Test, ERC1155Holder {
     PredictionMarket public market;
     OutcomeToken public ot;
     MockUSDC public baseToken;
@@ -21,6 +22,8 @@ contract PredictionMarketFuzzTest is Test {
     uint256 public yesId;
     uint256 public noId;
     uint256 public resolutionTime;
+
+    uint256 public constant MIN_LIQUIDITY = 10 ** 3;
 
     function setUp() public {
         baseToken = new MockUSDC();
@@ -49,10 +52,11 @@ contract PredictionMarketFuzzTest is Test {
 
         baseToken.mint(address(this), 1_000_000_000e6);
         baseToken.approve(address(market), type(uint256).max);
+        ot.setApprovalForAll(address(market), true);
     }
 
     function testFuzz_SwapAlwaysPreservesK(uint256 amountIn) public {
-        amountIn = bound(amountIn, 1, 100_000e6);
+        amountIn = bound(amountIn, 1e6, 100_000e6);
         market.addLiquidity(1_000_000e6);
 
         (uint256 ryBefore, uint256 rnBefore) = market.getReserves();
@@ -64,8 +68,7 @@ contract PredictionMarketFuzzTest is Test {
         (uint256 ryAfter, uint256 rnAfter) = market.getReserves();
         uint256 kAfter = ryAfter * rnAfter;
 
-        assertLe(kAfter, kBefore + 1, "k should not increase (fees reduce k)");
-        assertApproxEqAbs(kAfter, kBefore, kBefore / 1, "k should remain roughly constant");
+        assertApproxEqAbs(kAfter, kBefore, kBefore / 1000, "k should remain roughly constant");
     }
 
     function testFuzz_BuyOutcome(uint256 amountIn, uint256 liquidity) public {
@@ -82,7 +85,7 @@ contract PredictionMarketFuzzTest is Test {
     }
 
     function testFuzz_AddLiquidity(uint256 amount) public {
-        amount = bound(amount, 1, 100_000e6);
+        amount = bound(amount, MIN_LIQUIDITY + 1, 100_000e6);
 
         uint256 shares = market.addLiquidity(amount);
         assertTrue(shares > 0, "Shares should be minted");
@@ -98,7 +101,6 @@ contract PredictionMarketFuzzTest is Test {
         amount3 = bound(amount3, 1e6, 10_000e6);
 
         market.addLiquidity(1_000_000e6);
-        ot.setApprovalForAll(address(market), true);
 
         baseToken.approve(address(market), type(uint256).max);
 

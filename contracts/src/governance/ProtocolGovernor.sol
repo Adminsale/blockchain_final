@@ -14,11 +14,7 @@ contract ProtocolGovernor is Governor, GovernorSettings, GovernorCountingSimple,
         GovernorVotes(_token)
         GovernorVotesQuorumFraction(4)
         GovernorTimelockControl(_timelock)
-    {
-        _timelock.grantRole(_timelock.PROPOSER_ROLE(), address(this));
-        _timelock.grantRole(_timelock.EXECUTOR_ROLE(), address(this));
-        _timelock.grantRole(_timelock.CANCELLER_ROLE(), address(this));
-    }
+    {} // Roles must be granted externally after deployment
 
     function proposalThreshold() public view override(Governor, GovernorSettings) returns (uint256) {
         return super.proposalThreshold();

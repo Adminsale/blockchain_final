@@ -14,7 +14,7 @@ contract FeeVaultTest is Test {
     function setUp() public {
         asset = new MockUSDC();
         FeeVault impl = new FeeVault();
-        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeWithSelector(FeeVault.initialize.selector, address(asset), admin));
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeWithSelector(FeeVault.initialize.selector, address(asset), address(this)));
         vault = FeeVault(address(proxy));
 
         asset.mint(user, 1_000_000e6);
@@ -39,9 +39,17 @@ contract FeeVaultTest is Test {
 
     function test_DepositBelowMinimum() public {
         vm.startPrank(user);
-        asset.approve(address(vault), 5e6);
+        asset.approve(address(vault), 5);
         vm.expectRevert(abi.encodeWithSelector(FeeVault.BelowMinimumDeposit.selector));
-        vault.deposit(5e6, user);
+        vault.deposit(5, user);
+        vm.stopPrank();
+    }
+
+    function test_DepositExactMinimum() public {
+        vm.startPrank(user);
+        asset.approve(address(vault), 10);
+        uint256 shares = vault.deposit(10, user);
+        assertTrue(shares > 0);
         vm.stopPrank();
     }
 
@@ -84,9 +92,14 @@ contract FeeVaultTest is Test {
     }
 
     function test_RoleBasedAccess() public {
-        vm.prank(admin);
-        vault.grantRole(vault.DEFAULT_ADMIN_ROLE(), address(this));
-        vault.grantRole(vault.UPGRADER_ROLE(), address(this));
-        assertTrue(vault.hasRole(vault.UPGRADER_ROLE(), address(this)));
+        vault.grantRole(vault.UPGRADER_ROLE(), user);
+        assertTrue(vault.hasRole(vault.UPGRADER_ROLE(), user));
+    }
+
+    function test_OnlyAdminCanGrantRoles() public {
+        bytes32 adminRole = vault.DEFAULT_ADMIN_ROLE();
+        vm.prank(user);
+        vm.expectRevert();
+        vault.grantRole(adminRole, user);
     }
 }

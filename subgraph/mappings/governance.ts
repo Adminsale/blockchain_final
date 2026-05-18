@@ -11,8 +11,8 @@ export function handleProposalCreated(event: ProposalCreatedEvent): void {
   proposal.proposalId = event.params.proposalId
   proposal.description = event.params.description
   proposal.proposer = event.params.proposer
-  proposal.startBlock = event.params.startBlock
-  proposal.endBlock = event.params.endBlock
+  proposal.startBlock = event.params.voteStart
+  proposal.endBlock = event.params.voteEnd
   proposal.forVotes = BigInt.zero()
   proposal.againstVotes = BigInt.zero()
   proposal.abstainVotes = BigInt.zero()

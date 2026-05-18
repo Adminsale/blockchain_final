@@ -3,12 +3,13 @@ pragma solidity ^0.8.23;
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "../tokens/OutcomeToken.sol";
 import "../oracles/ChainlinkPriceFeed.sol";
 import "../libraries/Math.sol";
 
-contract PredictionMarket is AccessControl, ReentrancyGuard {
+contract PredictionMarket is AccessControl, ReentrancyGuard, ERC1155Holder {
     using SafeERC20 for IERC20;
 
     bytes32 public constant RESOLVER_ROLE = keccak256("RESOLVER_ROLE");
@@ -232,8 +233,9 @@ contract PredictionMarket is AccessControl, ReentrancyGuard {
         outcomeToken.mint(address(this), outcomeIdNo, amountBase, "");
 
         if (totalLpShares == 0) {
-            shares = PredictionMath.sqrt(amountBase * amountBase) - MINIMUM_LIQUIDITY;
+            shares = amountBase - MINIMUM_LIQUIDITY;
             lpShares[address(0)] = MINIMUM_LIQUIDITY;
+            lpShares[msg.sender] = shares;
             totalLpShares = shares + MINIMUM_LIQUIDITY;
             reserveYes = amountBase;
             reserveNo = amountBase;
@@ -294,8 +296,8 @@ contract PredictionMarket is AccessControl, ReentrancyGuard {
         if (balance == 0) revert NoTokensToRedeem();
 
         uint256 totalPool = baseToken.balanceOf(address(this));
-        uint256 winningReserve = outcome == 1 ? reserveYes : reserveNo;
-        uint256 amount = (balance * totalPool) / winningReserve;
+        uint256 totalWinningSupply = outcomeToken.totalSupply(tokenId);
+        uint256 amount = (balance * totalPool) / totalWinningSupply;
         if (amount == 0) revert NothingToRedeem();
 
         outcomeToken.burn(msg.sender, tokenId, balance);
@@ -319,6 +321,10 @@ contract PredictionMarket is AccessControl, ReentrancyGuard {
     {
         if (amountIn == 0 || reserveIn == 0 || reserveOut == 0) return 0;
         return (amountIn * reserveOut) / (reserveIn + amountIn);
+    }
+
+    function supportsInterface(bytes4 interfaceId) public view override(AccessControl, ERC1155Holder) returns (bool) {
+        return super.supportsInterface(interfaceId);
     }
 
     function _sendFees(uint256 amount) internal {
